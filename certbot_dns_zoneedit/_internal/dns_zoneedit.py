@@ -14,6 +14,7 @@ from certbot import errors, interfaces
 from certbot.plugins import common, dns_common
 import requests
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class Authenticator(dns_common.DNSAuthenticator):
         add(
             "credentials",
             help="ZoneEdit credentials INI file.",
-            default="/etc/letsencrypt/zeneedit.ini",
+            default="/etc/letsencrypt/zoneedit.ini",
         )
 
 
@@ -52,12 +53,12 @@ class Authenticator(dns_common.DNSAuthenticator):
             "credentials",
             "ZoneEdit credentials INI file",
             {
-                "dns_zoneedit_user": "User ID of the owner of the DNS zone.",
-                "dns_zoneedit_token": "ZoneEdit-generated token for the DNS zone.",
+                "user": "User ID of the owner of the DNS zone.",
+                "token": "ZoneEdit-generated token for the DNS zone.",
             },
         )
-        self.zoneedit_user = self.credentials.conf("dns_zoneedit_user")
-        self.zoneedit_token = self.credentials.conf("dns_zoneedit_token")
+        self.zoneedit_user = self.credentials.conf("user")
+        self.zoneedit_token = self.credentials.conf("token")
 
        
     def _perform(self, _domain: str, validation_name: str, validation: str) -> None:
@@ -69,7 +70,7 @@ class Authenticator(dns_common.DNSAuthenticator):
         :param str validation: The validation record content.
         :raises errors.PluginError: If the challenge cannot be performed
         """
-        self._fetch_urlt("txt-create", _domain, validation_name, validation)
+        self._fetch_url("txt-create", _domain, validation_name, validation)
 
 
     def _cleanup(self, _domain: str, validation_name: str, validation: str) -> None:
@@ -83,15 +84,25 @@ class Authenticator(dns_common.DNSAuthenticator):
         """
         self._fetch_url("txt-delete", _domain, validation_name, validation)
 
-    def _fetch_url(verb: str, domain_name: str, record_name: str, record_content: str)
+
+    def _fetch_url(self, verb: str, domain_name: str, record_name: str, record_content: str) -> None:
         url = "https://dynamic.zoneedit.com/" + verb + ".php"
-        payload = { 'host': domain_name, 'rdata': record_content }
+        payload = { 'host': record_name, 'rdata': record_content }
         credentials = ( self.zoneedit_user, self.zoneedit_token )
 
+        #logger.debug("Credentials %s, %s", self.zoneedit_user, self.zoneedit_token)
         logger.debug("Getting %s [%s %s %s]", url, domain_name, record_name, record_content);
         
         r = requests.get(url, params=payload, auth=credentials)
-        logger.debug("Returned code %d", p.status_code);
+        logger.debug("Request %s returned code %d", r.request.url, r.status_code);
+        logger.debug("ZoneEdit response %s", r.text)
+        # Wait for 15 seconds as ZoneEdit has a rate-limiter and
+        # requires a 10 seconds delay between requests.
+        time.sleep(15)
+
+        # Zoneedit responds with a status code 200 even in case of error
+        if r.text.startswith("<ERROR "):
+            raise requests.HTTPError(f"{r.text}")
         r.raise_for_status()
         
 
